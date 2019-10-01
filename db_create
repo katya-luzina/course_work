@@ -1,0 +1,249 @@
+#СОЗДАНИЕ БАЗЫ ДАННЫХ
+CREATE DATABASE orders;
+USE orders;
+
+
+
+#СПРАВОЧНИК ТИПОВ ЦЕННЫХ БУМАГ
+CREATE TABLE security_type
+(
+	id INT NOT NULL,
+    seccode VARCHAR(40) NOT NULL DEFAULT ' ',
+	instrument_type VARCHAR(4s0) NOT NULL DEFAULT ' ',
+    PRIMARY KEY (seccode)
+);
+
+LOAD DATA
+	INFILE '/Users/ekaterina/Desktop/w/курсовая/данные/security_type.txt'
+    	INTO TABLE security_type
+	FIELDS TERMINATED by '\t'
+    	LINES TERMINATED by '\r\n';
+
+
+
+#ДАННЫЕ ПО СДЕЛКАМ
+CREATE TABLE IF NOT EXISTS orders
+	(
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	seccode VARCHAR(30),
+	buysell CHAR(1),
+	ordertime BIGINT,
+	orderno BIGINT,
+	action ENUM('0', '1', '2'),
+	price FLOAT,
+	volume BIGINT,
+	tradeno BIGINT NULL,
+	tradeprice FLOAT NULL,
+	PRIMARY KEY (id),
+    FOREIGN KEY (seccode) REFERENCES security_type (seccode)
+	);
+    
+LOAD DATA
+	INFILE '/Users/ekaterina/Desctop/w/курсовая/данные/OrderLog20150901/OrderLog20150901.txt'
+    	INTO TABLE orders
+	FIELDS TERMINATED by ','
+	LINES TERMINATED by '\r\n'
+    IGNORE 1 LINES
+    (@id,
+    @seccode,
+    @buysell,
+    @ordertime,
+    @orderno,
+    @action,
+    @price,
+    @volume,
+    @tradeno,
+    @tradeprice)
+    set
+    id= if(@id = ' ', default(id), @id),
+    seccode= if(@seccode = ' ', default(seccode), @seccode),
+    buysell= if(@buysell = ' ', default(buysell), @buysell),
+    ordertime= if(@ordertime = ' ', default(ordertime), @ordertime),
+    orderno= if(@orderno = ' ', default(orderno), @orderno),
+    action= if(@action = ' ', default(action), @action),
+    price= if(@price = ' ', default(price), @price),
+    volume= if(@volume = ' ', default(volume), @volume),
+    tradeno= if(@tradeno = ' ', default(tradeno), @tradeno),
+    tradeprice= if(@tradeprice = ' ', default(tradeprice), @tradeprice);
+    
+CREATE INDEX iseccode ON orders(seccode);
+CREATE INDEX iordertime ON orders(ordertime);
+CREATE INDEX ioaction ON orders(action);
+CREATE INDEX ioprice ON orders(price);
+CREATE INDEX iovolume ON orders(volume);
+
+
+
+ #ПОИСК ОШИБОК В ОРДЕРЛОГЕ
+select count(orderno)
+	from orders
+		where price < 0
+        or price = 0
+	order by seccode; #-> ИТОГ куча нулевых цен
+    
+select *
+	from orders
+		where volume = 0
+        or  volume is NULL
+	order by volume desc;
+    
+select distinct(seccode)
+	from orders
+		where seccode not in (select seccode from security_type);
+
+
+
+#ТАБЛИЦА С ОШИБКАМИ
+CREATE TABLE IF NOT EXISTS order_mistakes
+	(
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	seccode VARCHAR(30),
+	buysell CHAR(1),
+	ordertime BIGINT,
+	orderno BIGINT,
+	action ENUM('0', '1', '2'),
+	price FLOAT,
+	volume BIGINT,
+	tradeno BIGINT,
+	tradeprice FLOAT,
+    reason VARCHAR(30), 
+	PRIMARY KEY (id)
+	);
+
+INSERT INTO order_mistakes (id, seccode, buysell, ordertime, orderno, action, price, volume, tradeno, tradeprice)
+	SELECT *
+		FROM orders
+			WHERE price <= 0 or volume <= 0;
+
+UPDATE order_mistakes SET reason = 'zero price' WHERE price = 0;
+
+UPDATE order_mistakes SET reason = 'zero volume' WHERE volume = 0;
+
+
+
+#ОБЫКНОВЕННЫЕ АКЦИИ
+ CREATE TABLE ordshares
+ (
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	seccode VARCHAR(30),
+	buysell CHAR(1),
+	ordertime BIGINT,
+	orderno BIGINT,
+	action ENUM('0', '1', '2'),
+	price FLOAT,
+	volume BIGINT,
+	tradeno BIGINT,
+	tradeprice FLOAT,
+	PRIMARY KEY (id),
+    FOREIGN KEY (seccode) REFERENCES security_type (seccode)
+);
+             
+INSERT INTO ordshares
+	SELECT a1.*
+		FROM orders a1
+		join security_type a2 ON a1.seccode = a2.seccode
+			WHERE a2. instrument_type = 'ordinary share';
+
+CREATE INDEX ioseccode ON ordshares(seccode);
+CREATE INDEX ioordertime ON ordshares(ordertime);
+CREATE INDEX ioaction ON ordshares(action);
+CREATE INDEX ioprice ON ordshares(price);
+CREATE INDEX iovolume ON ordshares(volume);
+
+
+
+drop table prefshares;
+#ПРИВИЛЕГИРОВАННЫЕ АКЦИИ
+ CREATE TABLE prefshares
+ (
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	seccode VARCHAR(30),
+	buysell CHAR(1),
+	ordertime BIGINT,
+	orderno BIGINT,
+	action ENUM('0', '1', '2'),
+	price FLOAT,
+	volume BIGINT,
+	tradeno BIGINT,
+	tradeprice FLOAT,
+	PRIMARY KEY (id),
+    FOREIGN KEY (seccode) REFERENCES security_type (seccode)
+);
+             
+INSERT INTO prefshares
+	SELECT a1.*
+		FROM orders a1
+		join security_type a2 ON a1.seccode = a2.seccode
+			WHERE a2. instrument_type = 'preffered share';
+
+CREATE INDEX ioseccode ON prefshares(seccode);
+CREATE INDEX ioordertime ON prefshares(ordertime);
+CREATE INDEX ioaction ON prefshares(action);
+CREATE INDEX ioprice ON prefshares(price);
+CREATE INDEX iovolume ON prefshares(volume);
+
+
+
+#ОБЛИГАЦИИ
+ CREATE TABLE bonds
+ (
+	id BIGINT NOT NULL AUTO_INCREMENT,
+	seccode VARCHAR(30),
+	buysell CHAR(1),
+	ordertime BIGINT,
+	orderno BIGINT,
+	action ENUM('0', '1', '2'),
+	price FLOAT,
+	volume BIGINT,
+	tradeno BIGINT,
+	tradeprice FLOAT,
+	PRIMARY KEY (id),
+    FOREIGN KEY (seccode) REFERENCES security_type (seccode)
+);
+             
+INSERT INTO bonds
+	SELECT a1.*
+		FROM orders a1
+		join security_type a2 ON a1.seccode = a2.seccode
+			WHERE a2. instrument_type = 'bond';
+
+CREATE INDEX ioseccode ON bonds(seccode);
+CREATE INDEX ioordertime ON bonds(ordertime);
+CREATE INDEX ioaction ON bonds(action);
+CREATE INDEX ioprice ON bonds(price);
+CREATE INDEX iovolume ON bonds(volume);
+
+
+
+#ТАБЛИЦА СО СТАТИСТИКАМИ   
+CREATE TABLE statistics
+(
+	id INT NOT NULL auto_increment,
+    seccode VARCHAR(30),
+    orders_placed bigint,
+    orders_executed bigint,
+    orders_cancelled bigint,
+    zero_price bigint,
+    zero_value bigint,
+    PRIMARY KEY (id),
+    FOREIGN KEY (seccode) REFERENCES security_type (seccode)
+);
+
+INSERT INTO statistics (seccode)
+	SELECT distinct seccode
+		FROM orders
+	ORDER BY seccode;
+    
+select * from statistics;
+        
+UPDATE statistics
+	SET 
+    orders_placed = (select count(*) from orders where orders.action = 1 and orders.seccode = statistics.seccode group by seccode);
+    
+UPDATE statistics
+	SET 
+    orders_executed = (select count(*) from orders where orders.action = 2 and orders.seccode = statistics.seccode group by seccode);
+    
+UPDATE statistics
+	SET 
+     orders_cancelled = (select count(*) from orders where orders.action = 3 and orders.seccode = statistics.seccode group by seccode);
