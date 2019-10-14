@@ -1,0 +1,187 @@
+import pymysql.cursors
+import os
+import mysql.connector
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+conn = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="")
+cur = conn.cursor()
+cur.execute ("""USE orders;""")
+
+def GetTicker ():
+    print ('Сейчас Вам будет предложено ввести данные для заполнения книги заявок')
+    correct = 0
+    while correct == 0:
+        seccode = input ('Введите тикер: ')
+        cur.execute("SELECT count(*) FROM security_type WHERE (seccode = '"+ seccode +"');")
+        if cur.fetchall() != [(0,)]:
+            correct = 1
+        else:
+            print ('Вы ввели некорректный тикер. Повторите ввод')
+    return(seccode)
+
+def GetTime():
+    correct = 0
+    while correct == 0:
+        moment = int(input ('Введите момент времени (момент времени должен быть записан в формате HHMMSSQQQ): '))
+        if int(moment) in range(100000000,235959999):
+            correct = 1
+        else:
+            print ('Вы ввели некорректный момент времени. Повторите ввод')
+    return(moment)
+
+def DefineTable(seccode):
+    cur.execute("SELECT instrument_type FROM security_type WHERE (seccode = '%s');" %(ticker))
+    if cur.fetchall() == [('ordinary share',)]:
+        table = 'ordshares'
+    else:
+        cur.execute("SELECT instrument_type FROM security_type WHERE (seccode = '%s');" % (ticker))
+        if cur.fetchall() == [('preffered share',)]:
+            table = 'prefshares'
+        else:
+            table = 'bonds'
+    return(table)
+
+def ReverseToDatetime(date, ordertime):
+    hh24 = ordertime//10000000 # выделяем разряды, соответствующие часам
+    mi = ordertime//100000%100 # выделяем разряды, соответствующие минутам
+    ss = ordertime//1000%100 # выделяем разряды, соответствующие секундам
+    ff3 = ordertime%1000 # выделяем разряды, соответствующие микросекундам
+    reversed_time = datetime.strptime(date + ' ' + str(hh24) + ':' + str(mi) + ':' + str(ss) + ',' + str(ff3), '%d.%m.%Y %H:%M:%S,%f') #переводим строку в формат времени для python
+    return(reversed_time)
+    
+def GlassBuild(wait_list):                       
+    glass = []
+    for wait in wait_list:
+            # если в стакане уже есть заявки, то изменяем существующие записи в стакане
+            if len(glass) != 0:
+                # вводим признак существования в стакане соответствующей пары направление-цена
+                flag = False
+                # движение построчно по стакану
+                for level in glass:
+                    # если в стакане найден уровень с соответствующей парой направление-цена, добавляем к нему объем
+                    if level [0] == wait[0] and level[1] == wait[3]:
+                        level[2] += wait[4]
+                        flag = True
+                        break
+                # если в стакане не найдена соотв пара направление-цена, добавляем новую пару направление-цена
+                if not flag:
+                    glass.append([wait[0], wait[3], wait[4]])
+            # если в стакане еще нет ни одной записи, то добавляем первую запись в стакан
+            else:
+                glass.append([wait[0], wait[3], wait[4]])
+    glass_new = []
+    for level in glass:
+        if level[2] != 0:
+            glass_new.append([level[0], level[1], level[2]])
+    return(glass_new)
+    
+    ticker = GetTicker()
+
+table = DefineTable(ticker)
+
+print('Сейчас Вам будет предложено ввести начало периода анализа')
+begin_time = GetTime()
+print('Сейчас Вам будет предложено ввести окончание периода анализа')
+end_time = GetTime()
+
+if table == 'ordshares':
+    cur.execute("SELECT * from ordshares WHERE (seccode = '%s') and (ordertime >= '%s') and (ordertime <= '%s');" % (ticker, begin_time, end_time))
+elif table == 'prefshares':
+    cur.execute("SELECT * from prefshares WHERE (seccode = '%s') and (ordertime >= '%s') and (ordertime <= '%s');" % (ticker, begin_time, end_time))
+else:
+    cur.execute("SELECT * from bonds WHERE (seccode = '%s') and (ordertime >= '%s') and (ordertime <= '%s');" % (ticker, begin_time, end_time))
+rows = cur.fetchall()
+
+iceberg = []
+date = '01.09.2015'
+wait_list = []
+iceberg = []
+metrics = []
+min_step = 0.01
+for elem in rows:
+    #апдейтим очередь заявок
+    date = '01.09.2015'
+    # отбор нерыночных заявок
+    if elem[6] != 0:
+        # если action = 1 (выставление заявки), то добавляем такую заявку в очередь
+        if elem[5] == '1':
+            wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7],'-', ReverseToDatetime(date, 0)])
+            # строим стакан на основании обновленной очереди заявок
+            glass = GlassBuild(wait_list)
+            # ищем нужную заявку в очереди и определяем, какое место в стакане относительно лучших цен она теперь занимает 
+            for wait in wait_list:
+                if elem[4] == wait[2]:
+                    current_price = wait[3]
+                    current_buysell = wait[0]
+                    # строим стакан и упорядочиваем объекты по убыванию цены
+                    # строим стакан и упорядочиваем объекты по убыванию цены
+                    df = pd.DataFrame.from_records(glass, columns=['buysell', 'price', 'volume'])
+                    df.sort_values('price', inplace=True, ascending=False)
+                    df['volume_buy'] = np.where (df ['buysell'] == 'B', df['volume'], 0)
+                    df['volume_sell'] = np.where (df ['buysell'] == 'S', df['volume'], 0)
+                    del df['buysell']
+                    del df['volume']
+                    # вводим номера мест для каждой пары цена-направление
+                    df['counter'] = range(len(df))
+                    # рассчитываем метрики ликвидности
+                    best_buy = df.query ('volume_buy != 0').max()[1]
+                    best_sell = df.query ('volume_sell != 0').min()[1]
+                    midpoint = (best_buy + best_sell)/2
+                    bid_ask_spread = abs(best_buy - best_sell)
+                    depth_buy = df.query ('volume_buy != 0 & price == @best_buy').max()[0]
+                    depth_sell = df.query ('volume_sell != 0 & price == @best_sell').min()[2]
+                    # определяем номер мест bestbuy и bestsell
+                    place_bestbuy = df.query ('volume_buy != 0').min()[3] + 1
+                    place_bestsell = df.query ('volume_sell != 0').max()[3] + 1
+                    best_buy = df.query ('volume_buy != 0').max()[0]
+                    best_sell = df.query ('volume_sell != 0').min()[0]
+                    # определяем номер места выбранной пары цена-направление
+                    place_current = df.query ('price == @current_price').max()[3]
+                    # если направление buy, то из номера места best_buy вычитаем номер места выбранной пары
+                    if current_buysell == 'B':
+                        place = place_current - place_bestbuy
+                        delta_pricetick = (abs(best_buy - current_price))/min_step
+                    # если направление sell, то из номера места пары выбранной пары вычитаем best_sell
+                    elif current_buysell == 'S':
+                        place = place_bestsell - place_current
+                        delta_pricetick = (abs(best_sell - current_price))/min_step
+                    # если выставленная заявка была выставлена на уровне лучших цен или выше них, рассчитываем обновленные метрики ликвидности
+                    if delta_pricetick == 0:
+                        metrics.append([wait[0],wait[1],wait[2],best_buy,best_sell,midpoint,bid_ask_spread,depth_buy,depth_sell])
+                    wait[5] = delta_pricetick
+        # если action = 0 (отмена заявки), то ищем эту заявку в очереди и удаляем объем заявки
+        elif elem[5] == '0':
+            for wait in wait_list:
+                # ищем заявку с соответствующим номером
+                if elem[4] == wait[2]:
+                    wait_list.remove(wait)
+                    break
+        # если action = 2 (исполнение), то ищем эту заявку и проверяем, как она исполнилась
+        elif elem[5] == '2':
+            for wait in wait_list:
+                # ищем заявку с соответствующим номером
+                if elem[4] == wait[2]:
+                    wait[4] -= elem [7]
+                    # если после исполнения заявки образовался отрицательный объем, записываем заявку в список заявок айсбергов, удаляем ее из из очереди заявок
+                    if wait[4] < 0:
+                        wait[6] = ReverseToDatetime(date, elem[3]) # указываем время исполнения заявки
+                        iceberg.append([wait[0],wait[1],wait[2],wait[3],wait[4],wait[5],wait[6]])
+                        wait_list.remove(wait)
+                    # если заявка исполнилась полностью, удаляем ее из очереди
+                    elif wait[4] == 0:
+                        wait_list.remove(wait)
+                        
+df_wait_list = pd.DataFrame.from_records(wait_list, columns = ['buysell', 'place_time', 'orderno', 'price', 'volume', 'delta_pricetick', 'default'])
+df_wait_list
+
+df_iceberg = pd.DataFrame.from_records(iceberg, columns = ['buysell', 'place_time', 'orderno', 'price', 'volume', 'delta_pricetick', 'reveal_time'])
+df_iceberg
+
+df_metrics = pd.DataFrame.from_records(metrics, columns = ['buysell', 'place_time', 'orderno', 'bestbuy','bestsell','midpoint','bid_ask_spread','depth_buy','depth_sell'])
+df_metrics
