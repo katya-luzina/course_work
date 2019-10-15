@@ -120,7 +120,6 @@ for elem in rows:
                     current_price = wait[3]
                     current_buysell = wait[0]
                     # строим стакан и упорядочиваем объекты по убыванию цены
-                    # строим стакан и упорядочиваем объекты по убыванию цены
                     df = pd.DataFrame.from_records(glass, columns=['buysell', 'price', 'volume'])
                     df.sort_values('price', inplace=True, ascending=False)
                     df['volume_buy'] = np.where (df ['buysell'] == 'B', df['volume'], 0)
@@ -129,20 +128,19 @@ for elem in rows:
                     del df['volume']
                     # вводим номера мест для каждой пары цена-направление
                     df['counter'] = range(len(df))
+                    df = df[['counter','volume_buy','price','volume_sell']]
                     # рассчитываем метрики ликвидности
-                    best_buy = df.query ('volume_buy != 0').max()[1]
-                    best_sell = df.query ('volume_sell != 0').min()[1]
+                    best_buy = df.query ('volume_buy != 0').max()[2]
+                    best_sell = df.query ('volume_sell != 0').min()[2]
                     midpoint = (best_buy + best_sell)/2
                     bid_ask_spread = abs(best_buy - best_sell)
-                    depth_buy = df.query ('volume_buy != 0 & price == @best_buy').max()[0]
-                    depth_sell = df.query ('volume_sell != 0 & price == @best_sell').min()[2]
+                    depth_buy = df.query ('volume_buy != 0 & price == @best_buy').max()[1]
+                    depth_sell = df.query ('volume_sell != 0 & price == @best_sell').min()[3]
                     # определяем номер мест bestbuy и bestsell
-                    place_bestbuy = df.query ('volume_buy != 0').min()[3] + 1
-                    place_bestsell = df.query ('volume_sell != 0').max()[3] + 1
-                    best_buy = df.query ('volume_buy != 0').max()[0]
-                    best_sell = df.query ('volume_sell != 0').min()[0]
+                    place_bestbuy = df.query ('volume_buy != 0').min()[0] + 1
+                    place_bestsell = df.query ('volume_sell != 0').max()[0] + 1
                     # определяем номер места выбранной пары цена-направление
-                    place_current = df.query ('price == @current_price').max()[3]
+                    place_current = df.query ('price == @current_price').max()[0]
                     # если направление buy, то из номера места best_buy вычитаем номер места выбранной пары
                     if current_buysell == 'B':
                         place = place_current - place_bestbuy
