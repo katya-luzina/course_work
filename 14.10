@@ -183,3 +183,57 @@ df_iceberg
 
 df_metrics = pd.DataFrame.from_records(metrics, columns = ['buysell', 'place_time', 'orderno', 'bestbuy','bestsell','midpoint','bid_ask_spread','depth_buy','depth_sell'])
 df_metrics
+
+#Рисунок для глубины
+fig, ax = plt.subplots()
+plt.grid()
+#plt.title('Динамика глубины')
+plt.xlabel('Момент времени')
+plt.ylabel('Объем')
+ax.plot(df_metrics.place_time, df_metrics.depth_buy, color="green", label="debth_buy")
+ax.plot(df_metrics.place_time, df_metrics.depth_sell, color="red", label="debth_sell")
+ax.legend()
+plt.show()
+
+#Рисунок для мидпоинта
+fig, ax = plt.subplots()
+plt.grid()
+#plt.title('Динамика мидпоинта')
+plt.xlabel('Момент времени')
+plt.ylabel('Цена')
+ax.plot(df_metrics.place_time, df_metrics.midpoint, color="orange", label="midpoint")
+ax.legend()
+plt.show()
+
+#Рисунок для лучших цен
+fig, ax = plt.subplots()
+plt.grid()
+#plt.title('Динамика лучших цен')
+plt.xlabel('Момент времени')
+plt.ylabel('Цена')
+ax.plot(df_metrics.place_time, df_metrics.bestbuy, color="green", label="best_buy")
+ax.plot(df_metrics.place_time, df_metrics.bestsell, color="red", label="best_sell")
+ax.legend()
+plt.show()
+
+#Рисунок для спреда
+fig, ax = plt.subplots()
+plt.grid()
+#plt.title('Динамика спреда')
+plt.xlabel('Момент времени')
+plt.ylabel('Спред')
+ax.plot(df_metrics.place_time, df_metrics.bid_ask_spread, color="orange", label="spread")
+ax.legend()
+plt.show()
+
+#Рисунок для накопленного количества айсбергов
+df_iceberg['counter'] = range(len(df_iceberg))
+df_iceberg = df_iceberg[['counter','buysell', 'place_time', 'orderno', 'price', 'volume', 'delta_pricetick', 'reveal_time']]
+fig, ax = plt.subplots()
+plt.grid()
+#plt.title('Динамика спреда')
+plt.xlabel('Момент времени')
+plt.ylabel('Количество айсбергов')
+ax.plot(df_iceberg.reveal_time, df_iceberg.counter, color="orange", label="Накопленное количество айсбергов")
+ax.legend()
+plt.show()
