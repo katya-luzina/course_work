@@ -105,6 +105,13 @@ def MetricsCount(glass):
     depth_sell = glass.query ('volume_sell != 0 & price == @best_sell').min()[3]
     return(best_buy, best_sell, midpoint, bid_ask_spread, depth_buy, depth_sell)
     
+def NeedToAppendMetrics(prev_best_buy, prev_best_sell, prev_depth_buy, prev_depth_sell, wait_list):
+    flag = 'No'
+    metrics_temp = MetricsCount(GlassBuild(wait_list))
+    if (prev_best_buy != metrics_temp[0] or prev_best_sell != metrics_temp[1] or prev_depth_buy != metrics_temp[4] or prev_depth_sell != metrics_temp[5] ) and metrics_temp[3] > 0:
+        flag = 'Yes'
+    return(flag, metrics_temp)
+    
 ticker = GetTicker()
 time = GetTime()
 table = DefineTable(ticker)
@@ -125,18 +132,28 @@ wait_list = []
 for elem in rows:
     # отбираем нерыночные заявки
     if elem[6] != 0:
-        wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7],'-', ReverseToDatetime(date, 0)])
-
+        if elem[2] == 'B':
+            delta_pricetick = (metrics[-1][3] - elem[6])/min_step
+            wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
+        else:
+            delta_pricetick = (elem[6] - metrics[-1][4])/min_step
+            wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
 # 1.1 строим стакан
 glass = GlassBuild(wait_list)
 
 # 1.2 рассчитываем метрики первоначального состояния стакана
 metrics = []
 metrics_temp = MetricsCount(glass)
-best_buy = metrics_temp[0]
-best_sell = metrics_temp[1]
-metrics.append(['-','-','-', metrics_temp[0], metrics_temp[1], metrics_temp[2], metrics_temp[3], metrics_temp[4], metrics_temp[5], 1, '-', '-'])
+metrics.append(['-',ReverseToDatetime(date, 100000000),'-', metrics_temp[0], metrics_temp[1], metrics_temp[2], metrics_temp[3], metrics_temp[4], metrics_temp[5], '-', '1'])
 
+# Этап 2 - обновляем очередь заявок + строим стакан + рассчитываем метрики в случае необходимости (обновились best_ask и best_bid или произошла сделка)
+if table == 'ordshares':
+    cur.execute("SELECT * from ordshares WHERE (seccode = '%s') and (ordertime > '100000000') and (ordertime <= '%s');" % (ticker, time))
+elif table == 'prefshares':
+    cur.execute("SELECT * from prefshares WHERE (seccode = '%s') and (ordertime > '100000000') and (ordertime <= '%s');" % (ticker, time))
+else:
+    cur.execute("SELECT * from bonds WHERE (seccode = '%s') and (ordertime > '100000000') and (ordertime <= '%s');" % (ticker, time))
+    
 # Этап 2 - обновляем очередь заявок + строим стакан + рассчитываем метрики в случае необходимости (обновились best_ask и best_bid или произошла сделка)
 if table == 'ordshares':
     cur.execute("SELECT * from ordshares WHERE (seccode = '%s') and (ordertime > '100000000') and (ordertime <= '%s');" % (ticker, time))
@@ -155,61 +172,53 @@ for elem in rows:
     if elem[6] != 0:
         # если action = 1 (выставление заявки), то добавляем такую заявку в очередь
         if elem[5] == '1':
-            # определяем место выставления заявки (delta_pricetick)
+            # определяем место выставления заявки
             if elem[2] == 'B':
-                delta_pricetick = (best_buy - elem[6])/min_step
-            elif elem[2] == 'S':
-                delta_pricetick = (elem[6] - best_sell)/min_step
-            wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
-            # строим стакан на основании обновленной очереди заявок
-            glass = GlassBuild(wait_list)
-            # определяем лучшие цены
-            metrics_temp = MetricsCount(glass)
-            best_buy = metrics_temp[0]
-            best_sell = metrics_temp[1]
-            # если заявка была выставлена на уровне лучших цен или выше, то записываем новое состояние стакана в metrics
-            if delta_pricetick <= 0 and metrics_temp[3] > 0:
-                metrics.append([elem[2], elem[3], elem[4], metrics_temp[0],metrics_temp[1], metrics_temp[2], metrics_temp[3], metrics_temp[4], metrics_temp[5], 1, best_buy, best_sell])    
-        # если action = 0 (отмена заявки), то ищем эту заявку в очереди и удаляем объем заявки
+                delta_pricetick = (metrics[-1][3] - elem[6])/min_step
+                wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
+                flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                if flag[0] == 'Yes':
+                    metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0],flag[1][1],flag[1][2],flag[1][3],flag[1][4],flag[1][5],delta_pricetick,'1'])
+            else:
+                delta_pricetick = (elem[6] - metrics[-1][4])/min_step
+                wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
+                flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                if flag[0] == 'Yes':
+                    metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0],flag[1][1],flag[1][2],flag[1][3],flag[1][4],flag[1][5],delta_pricetick,'1'])
+        # если action = 0 (отмена), то ищем эту заявку и удаляем ее из wait_list
         elif elem[5] == '0':
+            # ищем заявку с соответствующим номером
             for wait in wait_list:
-                # ищем заявку с соответствующим номером
                 if elem[4] == wait[2]:
-                    if elem[2] == 'B':
-                        delta_pricetick = (best_buy - elem[6])/min_step
-                    elif elem[2] == 'S':
-                        delta_pricetick = (elem[6] - best_sell)/min_step
                     wait_list.remove(wait)
-                    glass = GlassBuild(wait_list)
-                    metrics_temp = MetricsCount(glass)
-                    best_buy = metrics_temp[0]
-                    best_sell = metrics_temp[1]
-                    if delta_pricetick <= 0 and metrics_temp[3] > 0:
-                        metrics.append([elem[2], elem[3], elem[4], metrics_temp[0],metrics_temp[1], metrics_temp[2], metrics_temp[3], metrics_temp[4], metrics_temp[5], 0, best_buy, best_sell])
+                    flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                    if flag[0] == 'Yes':
+                        metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0], flag[1][1], flag[1][2], flag[1][3], flag[1][4], flag[1][5], wait[5], '0'])
         # если action = 2 (исполнение), то ищем эту заявку и проверяем, как она исполнилась
         elif elem[5] == '2':
+            # ищем заявку с соответствующим номером
             for wait in wait_list:
-                # ищем заявку с соответствующим номером
                 if elem[4] == wait[2]:
-                    if elem[2] == 'B':
-                        delta_pricetick = (best_buy - elem[6])/min_step
-                    elif elem[2] == 'S':
-                        delta_pricetick = (elem[6] - best_sell)/min_step
                     wait[4] -= elem [7]
-                    # если после исполнения заявки образовался отрицательный объем, записываем заявку в список заявок айсбергов, удаляем ее из из очереди заявок
                     if wait[4] < 0:
                         wait[6] = ReverseToDatetime(date, elem[3]) # указываем время исполнения заявки
-                        iceberg.append([wait[0],wait[1],wait[2],wait[3],wait[4],wait[5],wait[6]])
+                        iceberg.append([wait[0],wait[1],wait[2],wait[3],abs(wait[4]-elem[7]),wait[5],wait[6]])
                         wait_list.remove(wait)
-                    # если заявка исполнилась полностью, удаляем ее из очереди
+                        flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                        if flag[0] == 'Yes':
+                            metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0],flag[1][1],flag[1][2],flag[1][3],flag[1][4],flag[1][5],wait[5],'2'])
                     elif wait[4] == 0:
                         wait_list.remove(wait)
-                    glass = GlassBuild(wait_list)
-                    metrics_temp = MetricsCount(glass)
-                    best_buy = metrics_temp[0]
-                    best_sell = metrics_temp[1]
-                    if delta_pricetick <= 0 and metrics_temp[3] > 0:
-                        metrics.append([elem[2], elem[3], elem[4], metrics_temp[0], metrics_temp[1], metrics_temp[2], metrics_temp[3], metrics_temp[4], metrics_temp[5], 2, best_buy, best_sell])
-                        
-df_metrics = pd.DataFrame.from_records(metrics, columns = ['buysell', 'place_time', 'orderno', 'bestbuy','bestsell','midpoint','bid_ask_spread','depth_buy','depth_sell', 'action','best_buy(-1)', 'best_sell(-1)'])
+                        flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                        if flag[0] == 'Yes':
+                            metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0],flag[1][1],flag[1][2],flag[1][3],flag[1][4],flag[1][5],wait[5],'2'])
+                    elif wait[4] > 0:
+                        flag = NeedToAppendMetrics(metrics[-1][3], metrics[-1][4], metrics[-1][7], metrics[-1][8], wait_list)
+                        if flag[0] == 'Yes':
+                            metrics.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], flag[1][0],flag[1][1],flag[1][2],flag[1][3],flag[1][4],flag[1][5],wait[5],'2'])
+                            
+df_metrics = pd.DataFrame.from_records(metrics, columns = ['buysell', 'place_time', 'orderno', 'bestbuy','bestsell','midpoint','bid_ask_spread','depth_buy','depth_sell', 'delta_pricetick', 'action'])
 df_metrics
+
+df_iceberg = pd.DataFrame.from_records(iceberg, columns=['buysell','time_placed', 'orderno', 'price', 'volume', 'delta_pricetick', 'time_executed'])
+df_iceberg
