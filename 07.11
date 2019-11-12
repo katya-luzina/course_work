@@ -133,10 +133,12 @@ for elem in rows:
     # отбираем нерыночные заявки
     if elem[6] != 0:
         if elem[2] == 'B':
-            delta_pricetick = (metrics[-1][3] - elem[6])/min_step
+            metrics_temp = MetricsCount(GlassBuild(wait_list))
+            delta_pricetick = (metrics_temp[0] - elem[6])/min_step
             wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
         else:
-            delta_pricetick = (elem[6] - metrics[-1][4])/min_step
+            metrics_temp = MetricsCount(GlassBuild(wait_list))
+            delta_pricetick = (elem[6] - metrics_temp[1])/min_step
             wait_list.append([elem[2], ReverseToDatetime(date, elem[3]), elem[4], elem[6], elem[7], delta_pricetick, ReverseToDatetime(date, 0)])
 # 1.1 строим стакан
 glass = GlassBuild(wait_list)
